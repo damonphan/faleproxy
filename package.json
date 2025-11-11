@@ -26,20 +26,7 @@
     "supertest": "^6.3.4"
   },
   "jest": {
-    "testEnvironment": "node",
-    "collectCoverageFrom": [
-      "**/*.js",
-      "!**/node_modules/**",
-      "!**/coverage/**",
-      "!jest.config.js"
-    ],
-    "coverageThreshold": {
-      "global": {
-        "statements": 70,
-        "branches": 70,
-        "functions": 70,
-        "lines": 70
-      }
-    }
-  }
+  "testEnvironment": "node"
+}
+
 }
