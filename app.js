@@ -1,17 +1,85 @@
+// app.js
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const path = require('path');
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
 // Middleware to parse request bodies
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Route to serve the main page
+// Helper: Yale → Fale transformation ---------------------------------
+
+/**
+ * Replace "Yale" only when it appears as part of an institution name,
+ * and preserve the case pattern:
+ *   YALE University   -> FALE University
+ *   Yale College      -> Fale College
+ *   yale medical ...  -> fale medical ...
+ */
+function transformText(text) {
+  return text.replace(
+    /\b(yale)\b(?=\s+(University|College|medical school))/gi,
+    (match) => {
+      if (match === match.toUpperCase()) {
+        // YALE
+        return 'FALE';
+      }
+
+      if (
+        match[0] === match[0].toUpperCase() &&
+        match.slice(1) === match.slice(1).toLowerCase()
+      ) {
+        // Yale
+        return 'Fale';
+      }
+
+      // yale (all lower)
+      return 'fale';
+    }
+  );
+}
+
+/**
+ * Apply the Yale→Fale transformation to the HTML document:
+ *  - only text nodes (not attributes/URLs)
+ *  - <title> and <body> content
+ */
+function transformHtml(html) {
+  const $ = cheerio.load(html);
+
+  // Transform text nodes in <body>
+  $('body *')
+    .contents()
+    .filter(function () {
+      return this.nodeType === 3; // text node
+    })
+    .each(function () {
+      const original = $(this).text();
+      const updated = transformText(original);
+      if (original !== updated) {
+        $(this).replaceWith(updated);
+      }
+    });
+
+  // Transform <title>
+  const origTitle = $('title').text();
+  const newTitle = transformText(origTitle);
+  $('title').text(newTitle);
+
+  return {
+    html: $.html(),
+    title: newTitle,
+  };
+}
+
+// Routes --------------------------------------------------------------
+
+// Serve the main page
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -20,7 +88,7 @@ app.get('/', (req, res) => {
 app.post('/fetch', async (req, res) => {
   try {
     const { url } = req.body;
-    
+
     if (!url) {
       return res.status(400).json({ error: 'URL is required' });
     }
@@ -29,55 +97,28 @@ app.post('/fetch', async (req, res) => {
     const response = await axios.get(url);
     const html = response.data;
 
-    // Use cheerio to parse HTML and selectively replace text content, not URLs
-    const $ = cheerio.load(html);
-    
-    // Function to replace text but skip URLs and attributes
-    function replaceYaleWithFale(i, el) {
-      if ($(el).children().length === 0 || $(el).text().trim() !== '') {
-        // Get the HTML content of the element
-        let content = $(el).html();
-        
-        // Only process if it's a text node
-        if (content && $(el).children().length === 0) {
-          // Replace Yale with Fale in text content only
-          content = content.replace(/Yale/g, 'Fale').replace(/yale/g, 'fale');
-          $(el).html(content);
-        }
-      }
-    }
-    
-    // Process text nodes in the body
-    $('body *').contents().filter(function() {
-      return this.nodeType === 3; // Text nodes only
-    }).each(function() {
-      // Replace text content but not in URLs or attributes
-      const text = $(this).text();
-      const newText = text.replace(/Yale/g, 'Fail').replace(/yale/g, 'fail');
-      if (text !== newText) {
-        $(this).replaceWith(newText);
-      }
-    });
-    
-    // Process title separately
-    const title = $('title').text().replace(/Yale/g, 'Fail').replace(/yale/g, 'fail');
-    $('title').text(title);
-    
-    return res.json({ 
-      success: true, 
-      content: $.html(),
-      title: title,
-      originalUrl: url
+    // Transform the HTML
+    const { html: modifiedHtml, title } = transformHtml(html);
+
+    return res.json({
+      success: true,
+      content: modifiedHtml,
+      title,
+      originalUrl: url,
     });
   } catch (error) {
     console.error('Error fetching URL:', error.message);
-    return res.status(500).json({ 
-      error: `Failed to fetch content: ${error.message}` 
+    return res.status(500).json({
+      error: `Failed to fetch content: ${error.message}`,
     });
   }
 });
 
-// Start the server
-app.listen(PORT, () => {
-  console.log(`Faleproxy server running at http://localhost:${PORT}`);
-});
+// Export app for tests; only listen if run directly -------------------
+module.exports = app;
+
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Faleproxy server running at http://localhost:${PORT}`);
+  });
+}
